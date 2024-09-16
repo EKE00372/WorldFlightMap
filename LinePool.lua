@@ -14,8 +14,16 @@ function LinePoolMixin:OnLoad(parent, layer, subLayer, textureTemplate, resetter
 	self.textureTemplate = textureTemplate
 end
 
---[[ global ]] function CreateLinePool(parent, layer, subLayer, textureTemplate, resetterFunc)
-	local linePool = CreateFromMixins(LinePoolMixin)
-	linePool:OnLoad(parent, layer, subLayer, textureTemplate, resetterFunc or FramePool_Hide)
-	return linePool
+--[[ global ]]
+local function LinePoolFactory(linePool)
+    return linePool.parent:CreateLine(nil, linePool.layer, linePool.textureTemplate, linePool.subLayer)
+end
+
+function CreateLinePool(parent, layer, subLayer, textureTemplate, resetterFunc)
+    local linePool = CreateSecureObjectPool(LinePoolFactory)
+    linePool.parent = parent
+    linePool.layer = layer
+    linePool.subLayer = subLayer
+    linePool.textureTemplate = textureTemplate
+    return linePool
 end
