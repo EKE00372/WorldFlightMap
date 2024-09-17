@@ -1,3 +1,7 @@
+local LibShowUIPanel = LibStub("LibShowUIPanel-1.0")
+local ShowUIPanel = LibShowUIPanel.ShowUIPanel
+local HideUIPanel = LibShowUIPanel.HideUIPanel
+
 ---------------------------------------------------------
 -- Change IconScale to adjust the size of flight icons
 -- Value is a decimal between 0 and 1
@@ -184,7 +188,7 @@ function WorldFlightMapProvider:OnEvent(event, ...)
 			self.playerContinent = GetCurrentMapContinent(overrideMapID or playerMapID)
 			
 			if not self:GetMap():IsShown() and not InCombatLockdown() then
-				ToggleWorldMap()
+				if not WorldMapFrame:IsShown() then ShowUIPanel(WorldMapFrame) else HideUIPanel(WorldMapFrame) end
 				--if self.playerContinent == 905 and playerMapInfo.mapType > Enum.UIMapType.Zone and playerMapInfo.parentMapID then
 				--	self:GetMap():SetMapID(playerMapInfo.parentMapID)
 				-- Zoom to parent zone if we're in a lower map
@@ -213,7 +217,7 @@ function WorldFlightMapProvider:OnEvent(event, ...)
 
 		-- CloseTaxiMap()
 		if self:GetMap():IsShown() and not InCombatLockdown() then
-			ToggleWorldMap()
+			if not WorldMapFrame:IsShown() then ShowUIPanel(WorldMapFrame) else HideUIPanel(WorldMapFrame) end
 		end
 
 		self:RemoveAllData()

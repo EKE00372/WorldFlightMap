@@ -5,6 +5,9 @@
 ## Version: 11.0.2.0
 ## Dependencies: Blizzard_FlightMap
 
+Libs\LibStub.lua
+Libs\LibShowUIPanel-1.0.lua
+
 LinePool.lua
 WorldFlightPin.xml
 WorldFlightMap.lua
