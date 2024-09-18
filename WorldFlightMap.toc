@@ -2,7 +2,7 @@
 ## Title: WorldFlightMap FanUpdate
 ## Notes: Replaces the regular flight map with the world map
 ## Author: Semlar
-## Version: 11.0.2.0
+## Version: 11.0.2.1
 ## Dependencies: Blizzard_FlightMap
 
 Libs\LibStub.lua
