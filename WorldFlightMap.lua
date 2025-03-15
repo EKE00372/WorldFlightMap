@@ -164,7 +164,7 @@ function WorldFlightMapProvider:OnEvent(event, ...)
 			local overrideMapID
 			if IsInInstance() then
 				local _, _, _, _, _, _, _, instanceID = GetInstanceInfo()
-				if instanceID == 2481 or instanceID == 2657 then
+				if instanceID == 2481 or instanceID == 2657 or instanceID == 2769 then
 					if not C_AddOns.IsAddOnLoaded('Blizzard_FlightMap') then
 						UIParentLoadAddOn('Blizzard_FlightMap')
 						FlightMapFrame:UnregisterAllEvents()
