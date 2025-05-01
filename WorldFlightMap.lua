@@ -1,7 +1,3 @@
-local LibShowUIPanel = LibStub("LibShowUIPanel-1.0")
-local ShowUIPanel = LibShowUIPanel.ShowUIPanel
-local HideUIPanel = LibShowUIPanel.HideUIPanel
-
 ---------------------------------------------------------
 -- Change IconScale to adjust the size of flight icons
 -- Value is a decimal between 0 and 1
@@ -30,7 +26,7 @@ end
 
 local function GetParentZone(uiMapID)
 	if uiMapID then
-		local zone = MapUtil.GetMapParentInfo(uiMapID, Enum.UIMapType.Zone, true)
+		local zone = MapUtil.GetMapParentInfo(uiMapID, Enum.UIMapType.Zone, uiMapID ~= 2346 and true or false)
 		if zone then
 			return zone.mapID
 		end
@@ -164,7 +160,7 @@ function WorldFlightMapProvider:OnEvent(event, ...)
 			local overrideMapID
 			if IsInInstance() then
 				local _, _, _, _, _, _, _, instanceID = GetInstanceInfo()
-				if instanceID == 2481 or instanceID == 2657 or instanceID == 2769 then
+				if instanceID == 2481 or instanceID == 2657 then
 					if not C_AddOns.IsAddOnLoaded('Blizzard_FlightMap') then
 						UIParentLoadAddOn('Blizzard_FlightMap')
 						FlightMapFrame:UnregisterAllEvents()
