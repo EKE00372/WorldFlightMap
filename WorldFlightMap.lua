@@ -8,6 +8,7 @@ local IconScale = 1.0
 ---------------------------------------------------------
 
 local flightMapFrame = FlightMapFrame
+local originalTaxiButtons = {}
 -- InFlight uses FlightMapFrame directly, so it's necessary to change references
 FlightMapFrame = WorldMapFrame
 -- TaxiFrame = WorldMapFrame
@@ -84,12 +85,46 @@ WorldFlightMapProvider = CreateFromMixins(FlightMap_FlightPathDataProviderMixin)
 function WorldFlightMapProvider:OnAdded(...)
 	FlightMap_FlightPathDataProviderMixin.OnAdded(self, ...)
 	
-	UIParent:UnregisterEvent('TAXIMAP_OPENED')
-	TaxiFrame:UnregisterAllEvents() -- todo: does this even have any events registered any more?
+	-- 12.1.5 的開圖事件由 GameEvent 接管。
+	GameEvent.UnregisterInternalEvent('TAXIMAP_OPENED')
 
 	self:RegisterEvent('TAXIMAP_OPENED')
 	self:RegisterEvent('TAXIMAP_CLOSED')
+	self:RegisterEvent('TAXI_NODE_STATUS_CHANGED')
 	self:RegisterEvent('ADDON_LOADED')
+
+	local button = CreateFrame('Button', nil, self:GetMap().BorderFrame, 'UIPanelButtonTemplate')
+	button:SetSize(128, 24)
+	button:SetPoint('RIGHT', self:GetMap().BorderFrame.MaximizeMinimizeFrame, 'LEFT', -8, 0)
+	button:SetText('暴雪飛行地圖')
+	button:SetScript('OnClick', function() self:SwitchToNativeMap() end)
+	button:Hide()
+	self.nativeMapButton = button
+end
+
+function WorldFlightMapProvider:OpenNativeTaxiMap(uiMapSystem)
+	FlightMapFrame = flightMapFrame
+	-- 原生 TaxiFrame 會重用已建立的按鈕，先還原被插件借用的全域引用。
+	for name, button in pairs(originalTaxiButtons) do
+		_G[name] = button or nil
+		originalTaxiButtons[name] = nil
+	end
+	GameEvent.HandleTaxiMapOpened(self, 'TAXIMAP_OPENED', uiMapSystem)
+end
+
+function WorldFlightMapProvider:SwitchToNativeMap()
+	if not self:IsTaxiOpen() then return end
+	if InCombatLockdown() then
+		UIErrorsFrame:AddMessage(ERR_NOT_IN_COMBAT, 1, 0.1, 0.1)
+		return
+	end
+
+	local uiMapSystem = self.taxiMapSystem
+	-- 只交接介面，不結束飛行對話；先停用自己的圖層，避免 OnHide 關閉航點資料。
+	self:SetTaxiState(false)
+	self:RemoveAllData()
+	HideUIPanel(self:GetMap())
+	self:OpenNativeTaxiMap(uiMapSystem)
 end
 
 -- Arrow functions
@@ -157,31 +192,19 @@ function WorldFlightMapProvider:OnEvent(event, ...)
 		if InCombatLockdown() then
 			CloseTaxiMap()
 		else
-			local overrideMapID
 			if IsInInstance() then
-				local _, _, _, _, _, _, _, instanceID = GetInstanceInfo()
-				if instanceID == 2481 or instanceID == 2657 then
-					if not C_AddOns.IsAddOnLoaded('Blizzard_FlightMap') then
-						UIParentLoadAddOn('Blizzard_FlightMap')
-						FlightMapFrame:UnregisterAllEvents()
-						flightMapFrame = FlightMapFrame
-					else
-						FlightMapFrame =  flightMapFrame
-					end
-
-					ShowUIPanel(flightMapFrame)
-					return
-				elseif instanceID == 2516 then
-					overrideMapID = 2093
-				end
+				-- 副本內由暴雪依事件的地圖類型選擇原生飛行介面。
+				self:OpenNativeTaxiMap(...)
+				return
 			end
 
+			self.taxiMapSystem = ...
 			self:SetTaxiState(true)
-			self.taxiMap = GetMapSize(overrideMapID or GetTaxiMapID())
+			self.taxiMap = GetMapSize(GetTaxiMapID())
 			
 			local playerMapID = C_Map.GetBestMapForUnit('player')
 			local playerMapInfo = C_Map.GetMapInfo(playerMapID)
-			self.playerContinent = GetCurrentMapContinent(overrideMapID or playerMapID)
+			self.playerContinent = GetCurrentMapContinent(playerMapID)
 			
 			if not self:GetMap():IsShown() and not InCombatLockdown() then
 				if not WorldMapFrame:IsShown() then ShowUIPanel(WorldMapFrame) else HideUIPanel(WorldMapFrame) end
@@ -191,7 +214,7 @@ function WorldFlightMapProvider:OnEvent(event, ...)
 				-- We used to zoom out until we could fit multiple flight points on the same map, but this is simpler
 				-- if playerMapInfo.mapType > Enum.UIMapType.Zone and playerMapInfo.parentMapID then
 				if playerMapInfo.parentMapID then
-					local parentZone = overrideMapID or GetParentZone(playerMapID)
+					local parentZone = GetParentZone(playerMapID)
 					if parentZone then
 						self:GetMap():SetMapID(parentZone)
 					end
@@ -200,22 +223,37 @@ function WorldFlightMapProvider:OnEvent(event, ...)
 				end
 			end
 
+			-- 開圖期間也會刷新 provider，最後選定的地圖才是本次飛行對話的起點。
+			self.startingMapID = self:GetMap():GetMapID()
 			self:RefreshAllData()
 		end
 	elseif event == 'TAXIMAP_CLOSED' then
 		if FlightMapFrame ~= WorldMapFrame then
-			flightMapFrame:OnEvent(event, ...)
+			-- 兩種原生介面自行處理關閉事件，這裡只恢復副本外的替換引用。
 			FlightMapFrame = WorldMapFrame
 			return
 		end
 
 		self:SetTaxiState(false)
+		-- 戰鬥中可能保留世界地圖，仍須結束這次飛行對話的地圖狀態。
+		FlightMap_FlightPathDataProviderMixin.OnHide(self)
 
 		-- CloseTaxiMap()
 		if self:GetMap():IsShown() and not InCombatLockdown() then
 			if not WorldMapFrame:IsShown() then ShowUIPanel(WorldMapFrame) else HideUIPanel(WorldMapFrame) end
 		end
 
+		self:RemoveAllData()
+	elseif event == 'TAXI_NODE_STATUS_CHANGED' then
+		-- 原生飛行點會在這個事件重建，交由地圖下一次統一更新去重。
+		self:GetMap():SetPinSuppressionDirty()
+	end
+end
+
+function WorldFlightMapProvider:RefreshAllData(...)
+	if self:IsTaxiOpen() then
+		FlightMap_FlightPathDataProviderMixin.RefreshAllData(self, ...)
+	else
 		self:RemoveAllData()
 	end
 end
@@ -262,7 +300,12 @@ function WorldFlightMapProvider:AddFlightNode(taxiNodeData)
 				local pin = self:GetMap():AcquirePin("WorldFlightPinTemplate", playAnim);
 				
 				-- For the sake of having other addons treat our buttons like normal taxi map buttons
-				_G['TaxiButton' .. taxiNodeData.slotIndex] = pin
+				local buttonName = 'TaxiButton' .. taxiNodeData.slotIndex
+				-- false 記錄原先沒有按鈕，避免刷新時把自己的圖釘存成原生引用。
+				if originalTaxiButtons[buttonName] == nil then
+					originalTaxiButtons[buttonName] = _G[buttonName] or false
+				end
+				_G[buttonName] = pin
 				pin:SetID(taxiNodeData.slotIndex)
 				
 				-- Only show arrows on zone maps
@@ -299,20 +342,19 @@ function WorldFlightMapProvider:AddFlightNode(taxiNodeData)
 				
 				pin:SetShown(taxiNodeData.state ~= Enum.FlightPathState.Unreachable or taxiNodeData.isMapLayerTransition); -- Only show if part of a route, handled in the route building functions
 
-				for poiPin in self:GetMap():EnumeratePinsByTemplate("WorldFlightPinTemplate") do
-					if poiPin.name == taxiNodeData.name and playAnim then
-						poiPin:Hide()
-					else
-						poiPin:ClearNudgeSettings()
-						poiPin:ApplyCurrentPosition()
-					end
-				end
+				pin:ClearNudgeSettings()
+				pin:ApplyCurrentPosition()
 			end
 		end
 	end
 end
 
 function WorldFlightMapProvider:RemoveAllData()
+	-- 航線先解除端點錨定，再回收圖釘。
+	if self.linePool then
+		self.linePool:ReleaseAll()
+	end
+	self.slotIndexToPin = {}
 	self:GetMap():RemoveAllPinsByTemplate("WorldFlightPinTemplate")
 	self:GetMap():ResetTitleAndPortraitIcon()
 
@@ -328,7 +370,7 @@ function WorldFlightMapProvider:HighlightRouteToPin(pin)
 	if self.playerContinent == 905 then return end -- don't draw lines on argus maps (we could if they're on the same zone map)
 	
 	if not self.linePool then
-		self.linePool = CreateLinePool(pin, 'BACKGROUND', -2)
+		self.linePool = CreateLinePool(self:GetMap():GetCanvas(), 'BACKGROUND', -2)
 	end
 
 	local taxiSlotIndex = pin.taxiNodeData.slotIndex
@@ -353,6 +395,7 @@ function WorldFlightMapProvider:HighlightRouteToPin(pin)
 			destPin:Show()
 		end
 	end
+	self:GetMap():SetPinSuppressionDirty()
 end
 
 function WorldFlightMapProvider:RemoveRouteToPin(pin)
@@ -362,9 +405,10 @@ function WorldFlightMapProvider:RemoveRouteToPin(pin)
 
 	for _, pin in next, self.slotIndexToPin do
 		-- update visibility
-		pin:SetShown(pin.taxiNodeData.state ~= Enum.FlightPathState.Unreachable)
+		pin:SetShown(pin.taxiNodeData.state ~= Enum.FlightPathState.Unreachable or pin.taxiNodeData.isMapLayerTransition)
 		--Pin:UpdateState()
 	end
+	self:GetMap():SetPinSuppressionDirty()
 end
 
 function WorldFlightMapProvider:ShowBackgroundRoutesFromCurrent()
@@ -372,6 +416,7 @@ function WorldFlightMapProvider:ShowBackgroundRoutesFromCurrent()
 end
 
 function WorldFlightMapProvider:OnHide()
+	FlightMap_FlightPathDataProviderMixin.OnHide(self)
 	if self:IsTaxiOpen() then
 		CloseTaxiMap()
 	end
@@ -383,6 +428,10 @@ end
 
 function WorldFlightMapProvider:SetTaxiState(state)
 	self.taxiOpen = state
+	self.nativeMapButton:SetShown(state)
+	if not state then
+		self.taxiMapSystem = nil
+	end
 end
 
 function WorldMapFrame:ResetTitleAndPortraitIcon()
@@ -399,3 +448,43 @@ WorldMapFrame:AddDataProvider(WorldFlightMapProvider)
 -- https://github.com/Stanzilla/WoWUIBugs/issues/453
 WorldFlightPinMixin = CreateFromMixins(FlightMap_FlightPointPinMixin)
 WorldFlightPinMixin.SetPassThroughButtons = function() end
+
+-- 用原生 suppression 在所有 provider 刷新後去重，避免依賴飛行點的建立順序。
+function WorldFlightPinMixin:IsPinSuppressor()
+	return true
+end
+
+function WorldFlightPinMixin:ShouldSuppressPin(pin)
+	return self:IsShown() and pin.pinTemplate == 'FlightPointPinTemplate'
+		and pin:GetPoiInfo().nodeID == self.taxiNodeData.nodeID
+end
+
+function WorldFlightPinMixin:TrackSuppressedPin(pin)
+	if not self.suppressedPins then
+		self.suppressedPins = {}
+	end
+	self.suppressedPins[pin] = true
+end
+
+function WorldFlightPinMixin:ResetSuppression()
+	if self.suppressedPins then
+		for pin in pairs(self.suppressedPins) do
+			if pin:GetPinSuppressor() == self then
+				pin:ClearSuppression()
+				-- 已回收的原生圖釘不可因清除 suppression 而重新顯示。
+				if pin:GetMap() ~= self:GetMap() then
+					pin:Hide()
+				end
+			end
+		end
+		self.suppressedPins = nil
+	end
+end
+
+function WorldFlightPinMixin:FinalizeSuppression()
+end
+
+function WorldFlightPinMixin:OnReleased()
+	self:ResetSuppression()
+	FlightMap_FlightPointPinMixin.OnReleased(self)
+end
